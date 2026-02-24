@@ -1,0 +1,50 @@
+version: "3.9"
+
+services:
+  nessie:
+    image: projectnessie/nessie:latest
+    ports:
+      - "19120:19120"
+    environment:
+      QUARKUS_DATASOURCE_DB_KIND: "in-memory"
+
+  minio:
+    image: minio/minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: "admin"
+      MINIO_ROOT_PASSWORD: "password"
+    command: server /data --console-address ":9001"
+    
+  mc:
+    image: minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 admin password;
+      /usr/bin/mc mb myminio/warehouse;
+      exit 0;
+      "
+
+  spark:
+    image: spark-iceberg:local  # <--- ADD THIS LINE
+    build: .
+    command: tail -f /dev/null
+    depends_on:
+      - nessie
+      - minio
+    volumes:
+      - ./notebooks:/home/spark/notebooks
+    ports:
+      - "8888:8888"
+      - "8080:8080"
+    environment:
+      - SPARK_OPTS=--conf spark.jars.ivy=/tmp/.ivy
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+      - S3_ENDPOINT=http://minio:9000
+      - S3_PATH_STYLE_ACCESS=true

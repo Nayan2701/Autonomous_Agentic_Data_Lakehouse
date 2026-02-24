@@ -1,0 +1,11 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Docker / Secrets
+.env
+
+# Data / Notebooks (if you use them later)
+notebooks/
+data/
