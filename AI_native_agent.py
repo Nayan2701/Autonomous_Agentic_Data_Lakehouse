@@ -1,13 +1,10 @@
 import os
 import json
 import urllib.request
-import urllib.error
 from pyspark.sql import SparkSession
 
-# NO MORE API KEYS. WE ARE RUNNING LOCAL!
-
 def ask_llm(prompt):
-    # host.docker.internal allows the Docker container to talk to Ollama running on your Mac
+    
     url = "http://host.docker.internal:11434/api/generate"
     payload = {
         "model": "llama3.1",
@@ -26,7 +23,7 @@ def ask_llm(prompt):
         result = json.loads(response.read().decode("utf-8"))
         return result["response"].strip()
     except Exception as e:
-        return f"Error communicating with Local LLM: {e}\n(Did you leave the Ollama app running on your Mac?)"
+        return f"Error communicating with Local LLM: {e}"
 
 print("--- INITIALIZING SPARK ENGINE ---")
 print("Please wait while the Lakehouse boots up...")
@@ -49,6 +46,8 @@ spark = SparkSession.builder \
     .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
     .getOrCreate()
 
+spark.sparkContext.setLogLevel("ERROR")
+
 print("\n" + "="*50)
 print(" 🚀 LIMITLESS LOCAL LAKEHOUSE TERMINAL ONLINE")
 print(" Type 'exit' to close the session.")
@@ -68,16 +67,19 @@ while True:
     
     sql_prompt = f"""
     You are an autonomous Data Engineering AI. 
-    You manage an Apache Iceberg table named `nessie.traffic_violations`.
+    You manage an Apache Iceberg table named `nessie.autonomous_telemetry`.
+    Columns: vehicle_id (STRING), timestamp (TIMESTAMP), speed_kmh (DOUBLE), battery_kwh (DOUBLE), lidar_anomaly_flag (BOOLEAN), cooperative_platoon_id (STRING).
 
     CRITICAL SYNTAX RULES:
     1. BRANCHING commands MUST use ONLY 'nessie' as the catalog.
        Correct: CREATE BRANCH IF NOT EXISTS experiment IN nessie FROM main
        Correct: USE REFERENCE experiment IN nessie
     
-    2. DATA commands (SELECT, DELETE, UPDATE) MUST use the full table name 'nessie.traffic_violations'.
-       Correct: DELETE FROM nessie.traffic_violations WHERE fine_amount < 50
-       Correct: SELECT COUNT(*) FROM nessie.traffic_violations
+    2. DATA commands (SELECT, DELETE, UPDATE) MUST use the full table name 'nessie.autonomous_telemetry'.
+       Correct: SELECT COUNT(*) FROM nessie.autonomous_telemetry
+       
+    3. COMPACTION / OPTIMIZATION commands MUST use the Iceberg system procedure exactly like this:
+       Correct: CALL nessie.system.rewrite_data_files('nessie.autonomous_telemetry')
 
     The user command is: "{question}"
     Write the Spark SQL queries to execute this. Separate multiple commands with a semicolon (;).
@@ -87,18 +89,31 @@ while True:
     sql_query = ask_llm(sql_prompt)
     
     sql_query = sql_query.replace('```sql', '').replace('```', '').strip()
+    sql_query = sql_query.replace('\n', ' ')
     
-    # Python Interceptors to catch Llama's literal hallucinations
-    sql_query = sql_query.replace("IN nessie.traffic_violations", "IN nessie FROM main")
-    sql_query = sql_query.replace("ALTER TABLE nessie.traffic_violations", "")
-    sql_query = sql_query.replace("DELETE FROM nessie WHERE", "DELETE FROM nessie.traffic_violations WHERE")
-    sql_query = sql_query.replace("SELECT COUNT(*) FROM nessie;", "SELECT COUNT(*) FROM nessie.traffic_violations;")
+    sql_query = sql_query.replace("IN nessie.autonomous_telemetry", "IN nessie FROM main")
+    sql_query = sql_query.replace("ALTER TABLE nessie.autonomous_telemetry", "")
     
-    if "Error" in sql_query:
-        print(f"❌ AGENT FAILED: \n{sql_query}")
+    sql_query = sql_query.replace("SHOW PARTITIONS 'nessie.autonomous_telemetry'", "SHOW PARTITIONS nessie.autonomous_telemetry")
+    sql_query = sql_query.replace('SHOW PARTITIONS "nessie.autonomous_telemetry"', "SHOW PARTITIONS nessie.autonomous_telemetry")
+    
+    clean_queries = []
+    for q in sql_query.split(';'):
+        q = q.strip()
+        if not q: 
+            continue
+            
+        if "nessie.system." in q.lower() and "rewrite_data_files" not in q.lower():
+            print(f"🛡️ INTERCEPTOR BLOCKED HALLUCINATION: {q}")
+            continue
+            
+        clean_queries.append(q)
+        
+    if not clean_queries:
+        print("❌ AGENT FAILED: No valid queries to execute.")
         continue
 
-    queries = [q.strip() for q in sql_query.split(';') if q.strip()]
+    queries = clean_queries
     
     try:
         results_str = ""
@@ -118,7 +133,7 @@ while True:
         
         summary_prompt = f"""
         The user asked: "{question}"
-        I executed these SQL commands: {sql_query}
+        I executed these SQL commands: {clean_queries}
         The database returned: {results_str}
         Provide a brief, natural language summary of what was accomplished.
         """

@@ -1,4 +1,4 @@
-version: "3.9"
+
 
 services:
   nessie:
@@ -30,7 +30,7 @@ services:
       "
 
   spark:
-    image: spark-iceberg:local  # <--- ADD THIS LINE
+    image: spark-iceberg:local  
     build: .
     command: tail -f /dev/null
     depends_on:
